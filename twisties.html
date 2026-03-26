@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TWISTIES — Curvy Road Trip Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['"Bebas Neue"', 'sans-serif'],
+          mono:    ['"DM Mono"', 'monospace'],
+          sans:    ['Barlow', 'sans-serif'],
+        },
+        colors: {
+          bg:       '#0a0a0a',
+          surface:  '#111111',
+          surface2: '#1a1a1a',
+          surface3: '#212121',
+          border:   '#2a2a2a',
+          accent:   '#ff4500',
+          accent2:  '#ff8c00',
+          muted:    '#666666',
+          success:  '#39d353',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { height: 100%; margin: 0; }
+  .grad-text {
+    background: linear-gradient(135deg, #ff4500, #ff8c00);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 3px;
+    background: #2a2a2a; border-radius: 99px;
+    outline: none; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, #ff4500, #ff8c00);
+    cursor: pointer; border: 2px solid #111;
+    box-shadow: 0 0 6px rgba(255,69,0,.4);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, #ff4500, #ff8c00);
+    cursor: pointer; border: 2px solid #111;
+  }
+  #sidebar::-webkit-scrollbar { width: 4px; }
+  #sidebar::-webkit-scrollbar-track { background: transparent; }
+  #sidebar::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 99px; }
+  @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.3} }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .pulse   { animation: pulse 1s infinite; }
+  .fade-in { animation: fadeIn .35s ease forwards; }
+  #planBtn::before {
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(135deg,transparent,rgba(255,255,255,.12) 50%,transparent);
+    transform:translateX(-100%); transition:transform .45s;
+  }
+  #planBtn:hover::before { transform:translateX(100%); }
+
+  /* JS-rendered dynamic elements */
+  .stop-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .stop-marker { width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:.8rem;border:2px solid; }
+  .stop-marker.origin { border-color:#39d353;color:#39d353; }
+  .stop-marker.dest   { border-color:#ff4500;color:#ff4500; }
+  .stop-marker.via    { border-color:#ff8c00;color:#ff8c00; }
+  .stop-row input[type="text"] { flex:1;background:#212121;border:1px solid #2a2a2a;border-radius:6px;color:#e8e8e8;font-family:'Barlow',sans-serif;font-size:.9rem;padding:.55rem .75rem;outline:none;transition:border-color .2s,box-shadow .2s; }
+  .stop-row input:focus { border-color:#ff4500;box-shadow:0 0 0 2px rgba(255,69,0,.15); }
+  .stop-row input::placeholder { color:#444;font-style:italic; }
+  .stop-remove { width:26px;height:26px;border-radius:50%;flex-shrink:0;border:1px solid #2a2a2a;background:transparent;color:#555;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;transition:all .2s; }
+  .stop-remove:hover { border-color:#f33;color:#f33; }
+  .stop-remove.hidden { visibility:hidden; }
+  .status-line { display:flex;align-items:center;gap:8px;padding:3px 0;opacity:.25;transition:opacity .3s;font-size:.72rem; }
+  .status-line.done        { opacity:1;color:#39d353; }
+  .status-line.active-step { opacity:1;color:#ff8c00; }
+  .status-dot { width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0; }
+  .time-block { text-align:center; }
+  .time-block .tv { font-family:'Bebas Neue',sans-serif;font-size:1.5rem;line-height:1; }
+  .time-block .tl { font-size:.5rem;color:#666;letter-spacing:2px;text-transform:uppercase;margin-top:2px;font-family:'DM Mono',monospace; }
+  .time-arrow { font-size:1rem;color:#ff4500; }
+  .time-delta { text-align:center; }
+  .time-delta .tv { font-family:'Bebas Neue',sans-serif;font-size:1.5rem;line-height:1;color:#ff8c00; }
+  .time-delta .tl { font-size:.5rem;color:#ff8c00;letter-spacing:2px;text-transform:uppercase;margin-top:2px;font-family:'DM Mono',monospace; }
+  .stat-box { background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:.65rem .5rem;text-align:center; }
+  .stat-value { font-family:'Bebas Neue',sans-serif;font-size:1.3rem;line-height:1;background:linear-gradient(135deg,#ff4500,#ff8c00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; }
+  .stat-label { font-family:'DM Mono',monospace;font-size:.48rem;color:#555;letter-spacing:1.5px;text-transform:uppercase;margin-top:2px; }
+  .road-item { display:flex;align-items:center;gap:10px;padding:.65rem .75rem;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;margin-bottom:5px;transition:border-color .2s; }
+  .road-item:hover { border-color:#ff4500; }
+  .road-rank { font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:#ff4500;width:1.6rem;text-align:center;flex-shrink:0; }
+  .road-info { flex:1;min-width:0; }
+  .road-name { font-weight:500;font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .road-meta { font-family:'DM Mono',monospace;font-size:.58rem;color:#555;margin-top:2px; }
+  .road-score-bar { width:50px;height:3px;background:#2a2a2a;border-radius:99px;overflow:hidden;flex-shrink:0; }
+  .road-score-fill { height:100%;background:linear-gradient(90deg,#ff4500,#ff8c00);border-radius:99px;transition:width .8s; }
+  .pm-body { display:none; }
+  .pm-body.open { display:block; }
+  .pm-arrow { transition:transform .3s;display:inline-block; }
+  .pm-toggle.open .pm-arrow { transform:rotate(180deg); }
+</style>
+</head>
+
+<body class="bg-bg text-[#e8e8e8] font-sans flex flex-col h-full overflow-hidden">
+
+  <!-- Top Bar -->
+  <header class="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-border bg-surface z-10">
+    <div class="flex items-center gap-3">
+      <span class="font-display text-[1.6rem] tracking-[3px] grad-text leading-none">Twisties</span>
+      <span class="font-mono text-[0.58rem] text-muted tracking-[2px] uppercase border border-border rounded px-2 py-0.5 hidden sm:inline">Curvy Road Trip Planner</span>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="flex border border-border rounded overflow-hidden font-mono text-[0.6rem]">
+        <button onclick="setUnit('mi')" id="unitMi" class="px-3 py-1.5 bg-accent text-white cursor-pointer transition-all">MI</button>
+        <button onclick="setUnit('km')" id="unitKm" class="px-3 py-1.5 bg-transparent text-muted cursor-pointer transition-all hover:text-[#e8e8e8]">KM</button>
+      </div>
+      <div class="font-mono text-[0.55rem] text-muted hidden md:block">
+        Data: <span class="text-success">OSM</span> · Routing: <span class="text-success">OSRM</span> · v<span class="text-success">3.0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main: sidebar + map -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- LEFT SIDEBAR -->
+    <aside id="sidebar" class="w-[340px] flex-shrink-0 flex flex-col overflow-y-auto bg-surface border-r border-border">
+      <div class="p-5 flex flex-col gap-5">
+
+        <!-- Sliders -->
+        <div class="flex flex-col gap-4">
+          <!-- Curviness -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-[0.6rem] tracking-[2px] text-muted uppercase">Curviness</span>
+              <span id="curvinessValue" class="font-display text-[1.2rem] grad-text leading-none">50%</span>
+            </div>
+            <input type="range" id="curvinessSlider" min="10" max="100" value="50" step="5" oninput="onCurvinessChange(this.value)">
+            <div class="flex justify-between font-mono text-[0.48rem] text-[#3a3a3a] tracking-wide">
+              <span>CHILL</span><span>MODERATE</span><span>TWISTY</span><span>MAX</span>
+            </div>
+          </div>
+          <!-- Detour -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-[0.6rem] tracking-[2px] text-muted uppercase flex items-center gap-1">
+                Detour Budget
+                <span id="linkIcon" onclick="toggleLink()" title="Linked to curviness"
+                  class="cursor-pointer text-accent2 text-[0.65rem] opacity-80 hover:opacity-100 transition-opacity ml-1">🔗</span>
+              </span>
+              <span id="detourValue" class="font-display text-[1.2rem] grad-text leading-none">+30%</span>
+            </div>
+            <input type="range" id="detourSlider" min="5" max="100" value="30" step="5" oninput="onDetourChange(this.value)">
+            <div class="flex justify-between font-mono text-[0.48rem] text-[#3a3a3a] tracking-wide">
+              <span>+5%</span><span>+30%</span><span>+60%</span><span>+100%</span>
+            </div>
+            <div id="detourHint" class="font-mono text-[0.55rem] text-muted">Adds ~30% to trip time</div>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="h-px bg-border"></div>
+
+        <!-- Locations -->
+        <div class="flex flex-col gap-1">
+          <div class="font-mono text-[0.6rem] tracking-[2px] text-muted uppercase mb-2">Locations</div>
+          <div id="stopsList">
+            <div class="stop-row">
+              <div class="stop-marker origin">A</div>
+              <input type="text" placeholder="Start — e.g. Dallas, TX" value="Dallas, TX"/>
+              <button class="stop-remove hidden" onclick="removeStop(this)">&times;</button>
+            </div>
+            <div class="stop-row">
+              <div class="stop-marker dest">B</div>
+              <input type="text" placeholder="End — e.g. Hot Springs, AR" value="Hot Springs, AR"/>
+              <button class="stop-remove hidden" onclick="removeStop(this)">&times;</button>
+            </div>
+          </div>
+          <button onclick="addStop()"
+            class="flex items-center justify-center gap-1.5 w-full mt-1 py-2 px-3 bg-transparent border border-dashed border-border rounded-lg text-muted font-mono text-[0.6rem] tracking-wide cursor-pointer transition-all hover:border-accent2 hover:text-accent2">
+            + Add Destination
+          </button>
+        </div>
+
+        <!-- Find Button -->
+        <button id="planBtn" onclick="planRoute()"
+          class="w-full py-3 bg-gradient-to-r from-accent to-accent2 text-white font-display text-[1.2rem] tracking-[4px] rounded-lg border-none cursor-pointer transition-opacity relative overflow-hidden hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+          ⚡ Find Twisty Roads
+        </button>
+
+        <!-- Status Bar -->
+        <div id="statusBar" class="hidden flex-col gap-1 bg-surface2 border border-border rounded-lg px-4 py-3 font-mono text-muted">
+          <div class="status-line" id="s1"><div class="status-dot"></div> Geocoding locations...</div>
+          <div class="status-line" id="s2"><div class="status-dot"></div> Computing baseline route...</div>
+          <div class="status-line" id="s3"><div class="status-dot"></div> Fetching road geometry...</div>
+          <div class="status-line" id="s4"><div class="status-dot"></div> Scoring curvature...</div>
+          <div class="status-line" id="s5"><div class="status-dot"></div> Selecting waypoints...</div>
+        </div>
+
+        <!-- Error -->
+        <div id="errorCard" class="hidden bg-[rgba(255,69,0,0.06)] border border-[rgba(255,69,0,0.25)] rounded-lg px-4 py-3 font-mono text-[0.75rem] text-accent2"></div>
+
+        <!-- Results -->
+        <div id="resultsCard" class="hidden flex-col gap-4 fade-in">
+          <div class="flex items-center justify-between">
+            <span class="font-display text-[1rem] tracking-[2px] text-accent">Your Twisty Route</span>
+            <span id="routeBadge" class="font-mono text-[0.55rem] tracking-[2px] bg-[rgba(255,69,0,0.12)] border border-[rgba(255,69,0,0.25)] text-accent2 px-2.5 py-1 rounded">—</span>
+          </div>
+          <div id="timeCompare" class="flex items-center justify-around p-3 bg-surface2 border border-border rounded-lg font-mono"></div>
+          <div id="statsRow" class="grid grid-cols-2 gap-2"></div>
+          <div class="h-px bg-border"></div>
+          <div>
+            <div class="font-mono text-[0.58rem] tracking-[2px] text-muted uppercase mb-2">Top Curvy Segments</div>
+            <div id="roadsList"></div>
+          </div>
+          <a id="mapsLink" href="#" target="_blank"
+            class="flex items-center justify-center gap-2 w-full py-2.5 bg-transparent border border-accent rounded-lg text-accent font-display text-[1rem] tracking-[3px] no-underline transition-all hover:bg-accent hover:text-white">
+            Open in Google Maps
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+
+        <!-- PM Notes -->
+        <div class="border border-border rounded-lg overflow-hidden">
+          <button onclick="togglePmNotes()" class="pm-toggle w-full flex items-center justify-between px-4 py-3 bg-[rgba(57,211,83,0.04)] text-success font-mono text-[0.6rem] tracking-[2px] uppercase border-none cursor-pointer">
+            🛠 PM Build Notes <span class="pm-arrow text-[0.7rem]">▼</span>
+          </button>
+          <div id="pmNotesBody" class="pm-body px-4 py-4 text-[0.78rem] leading-relaxed text-[#888] border-t border-border">
+            <p class="font-display text-[0.85rem] tracking-[2px] text-success mb-1">The Problem</p>
+            <p class="mb-3 text-[#777]">Google Maps = fastest. Enthusiasts want most fun. Opposite goals.</p>
+            <p class="font-display text-[0.85rem] tracking-[2px] text-success mb-1">V1→V2→V3</p>
+            <ul class="mb-3 space-y-1 text-[#777]">
+              <li class="flex gap-2"><span class="text-accent flex-shrink-0">→</span><span><strong class="text-[#999]">V1:</strong> Bounding box. Roads scattered randomly.</span></li>
+              <li class="flex gap-2"><span class="text-accent flex-shrink-0">→</span><span><strong class="text-[#999]">V2:</strong> OSRM corridor. No time control.</span></li>
+              <li class="flex gap-2"><span class="text-accent flex-shrink-0">→</span><span><strong class="text-[#999]">V3:</strong> Linked sliders + time budget + multi-stop.</span></li>
+            </ul>
+            <p class="font-display text-[0.85rem] tracking-[2px] text-success mb-1">Guardrails</p>
+            <p class="text-[#777]">% of baseline. 4h + 75% = 7h max. Hard cap +100%.</p>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- RIGHT: Full-height map -->
+    <div class="flex-1 relative bg-[#0d0d0d]">
+      <div id="routeMap" class="absolute inset-0"></div>
+
+      <!-- Legend overlay -->
+      <div id="mapLegend" class="hidden absolute bottom-5 left-5 gap-3 bg-[rgba(17,17,17,0.88)] backdrop-blur-sm border border-border rounded-xl px-4 py-2.5 font-mono text-[0.55rem] text-muted tracking-wide z-[500]">
+        <div class="flex items-center gap-1.5"><div class="w-4 h-[3px] rounded-full" style="background:#4488ff"></div> Baseline</div>
+        <div class="flex items-center gap-1.5"><div class="w-4 h-[3px] rounded-full" style="background:#ff4500"></div> Twisty</div>
+        <div class="flex items-center gap-1.5"><div class="w-4 h-[2px] rounded-full" style="background:#ffff00"></div> Curvy</div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="mapPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+        <div class="font-display text-[5rem] tracking-[8px] text-[rgba(255,69,0,0.05)] leading-none">TWISTIES</div>
+        <div class="font-mono text-[0.62rem] text-[#2a2a2a] tracking-[3px] uppercase mt-4">Set your locations and hit Find</div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+let useMiles=true,slidersLinked=true,routeMap=null,stopCount=2;
+const C2D={10:5,15:8,20:12,25:15,30:18,35:22,40:25,45:28,50:30,55:35,60:40,65:45,70:50,75:55,80:60,85:65,90:70,95:80,100:75};
+
+window.addEventListener('load',function(){
+  routeMap=L.map('routeMap',{zoomControl:true});
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM',subdomains:'abcd',maxZoom:19}).addTo(routeMap);
+  routeMap.setView([37.5,-96],4);
+});
+
+function setUnit(u){
+  useMiles=u==='mi';
+  var mi=document.getElementById('unitMi'),km=document.getElementById('unitKm');
+  if(useMiles){mi.className='px-3 py-1.5 bg-accent text-white cursor-pointer transition-all';km.className='px-3 py-1.5 bg-transparent text-muted cursor-pointer transition-all hover:text-[#e8e8e8]';}
+  else{km.className='px-3 py-1.5 bg-accent text-white cursor-pointer transition-all';mi.className='px-3 py-1.5 bg-transparent text-muted cursor-pointer transition-all hover:text-[#e8e8e8]';}
+}
+function ds(km){return useMiles?Math.round(km*.621371)+' mi':Math.round(km)+' km'}
+function dv(km){return useMiles?Math.round(km*.621371):Math.round(km)}
+function du(){return useMiles?'mi':'km'}
+function ts(m){const h=Math.floor(m/60),mn=Math.round(m%60);return h===0?mn+'m':mn===0?h+'h':h+'h '+mn+'m'}
+function onCurvinessChange(v){v=+v;document.getElementById('curvinessValue').textContent=v+'%';if(slidersLinked){const s=C2D[v]||Math.round(v*.75),c=Math.min(100,Math.max(5,s));document.getElementById('detourSlider').value=c;document.getElementById('detourValue').textContent='+'+c+'%';document.getElementById('detourHint').textContent='Adds ~'+c+'% to trip time'}}
+function onDetourChange(v){v=+v;document.getElementById('detourValue').textContent='+'+v+'%';document.getElementById('detourHint').textContent='Adds ~'+v+'% to trip time';if(slidersLinked){slidersLinked=false;var i=document.getElementById('linkIcon');i.textContent='\uD83D\uDD13';i.title='Unlinked';i.classList.add('opacity-30')}}
+function toggleLink(){slidersLinked=!slidersLinked;var i=document.getElementById('linkIcon');if(slidersLinked){i.textContent='\uD83D\uDD17';i.title='Linked';i.classList.remove('opacity-30')}else{i.textContent='\uD83D\uDD13';i.title='Unlinked';i.classList.add('opacity-30')}if(slidersLinked)onCurvinessChange(document.getElementById('curvinessSlider').value)}
+function addStop(){var l=document.getElementById('stopsList'),rows=l.querySelectorAll('.stop-row');if(rows.length>=8)return;stopCount++;var lt=String.fromCharCode(64+stopCount),r=document.createElement('div');r.className='stop-row';r.innerHTML='<div class="stop-marker via">'+lt+'</div><input type="text" placeholder="e.g. Memphis, TN"/><button class="stop-remove" onclick="removeStop(this)">×</button>';l.insertBefore(r,rows[rows.length-1]);refreshMarkers()}
+function removeStop(b){b.closest('.stop-row').remove();refreshMarkers()}
+function refreshMarkers(){var rows=document.querySelectorAll('#stopsList .stop-row');rows.forEach(function(r,i){var m=r.querySelector('.stop-marker'),b=r.querySelector('.stop-remove');m.textContent=String.fromCharCode(65+i);if(i===0){m.className='stop-marker origin';b.classList.add('hidden')}else if(i===rows.length-1){m.className='stop-marker dest';b.classList.add('hidden')}else{m.className='stop-marker via';b.classList.remove('hidden')}})}
+function getStops(){return Array.from(document.querySelectorAll('#stopsList .stop-row input')).map(function(i){return i.value.trim()}).filter(function(v){return v})}
+var toRad=function(d){return d*Math.PI/180};
+function hav(a1,o1,a2,o2){var R=6371,dA=toRad(a2-a1),dO=toRad(o2-o1),a=Math.pow(Math.sin(dA/2),2)+Math.cos(toRad(a1))*Math.cos(toRad(a2))*Math.pow(Math.sin(dO/2),2);return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))}
+function cR(a1,o1,a2,o2,a3,o3){var a=hav(a1,o1,a2,o2),b=hav(a2,o2,a3,o3),c=hav(a1,o1,a3,o3),s=(a+b+c)/2,q=s*(s-a)*(s-b)*(s-c);return q<=0?Infinity:(a*b*c)/(4*Math.sqrt(q))}
+function scoreWay(w){var n=w.geometry;if(!n||n.length<3)return{score:0,length:0,scorePerKm:0};var ts=0,tl=0,i;for(i=0;i<n.length-1;i++)tl+=hav(n[i].lat,n[i].lon,n[i+1].lat,n[i+1].lon);for(i=0;i<n.length-2;i++){var p=n[i],q=n[i+1],r=n[i+2],sl=hav(p.lat,p.lon,q.lat,q.lon)+hav(q.lat,q.lon,r.lat,r.lon),rad=cR(p.lat,p.lon,q.lat,q.lon,r.lat,r.lon),wt=0;if(rad<.03)wt=4;else if(rad<.06)wt=3;else if(rad<.175)wt=2;else if(rad<.5)wt=1;ts+=sl*wt*1000}return{score:ts,length:tl,scorePerKm:tl>0?ts/tl:0}}
+function setStep(n,st){var e=document.getElementById('s'+n);if(!e)return;e.classList.remove('done','active-step');e.querySelector('.status-dot').classList.remove('pulse');if(st==='active'){e.classList.add('active-step');e.querySelector('.status-dot').classList.add('pulse')}else if(st==='done')e.classList.add('done')}
+function showStatus(){var sb=document.getElementById('statusBar');sb.classList.remove('hidden');sb.classList.add('flex');[1,2,3,4,5].forEach(function(n){setStep(n,'wait')})}
+function hideStatus(){var sb=document.getElementById('statusBar');sb.classList.add('hidden');sb.classList.remove('flex')}
+function showError(m){var e=document.getElementById('errorCard');e.textContent='⚠ '+m;e.classList.remove('hidden');e.classList.add('block')}
+function hideError(){var e=document.getElementById('errorCard');e.classList.add('hidden');e.classList.remove('block')}
+function togglePmNotes(){document.querySelector('.pm-toggle').classList.toggle('open');document.getElementById('pmNotesBody').classList.toggle('open')}
+async function geocode(p){var r=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(p)+'&format=json&limit=1',{headers:{'Accept-Language':'en','User-Agent':'Twisties/3'}});if(!r.ok)throw new Error('Geocoding failed: '+p);var d=await r.json();if(!d.length)throw new Error('Not found: '+p);return{lat:+d[0].lat,lon:+d[0].lon,name:d[0].display_name.split(',').slice(0,2).join(',').trim()}}
+async function osrm(pts){var c=pts.map(function(p){return p.lon+','+p.lat}).join(';'),r=await fetch('https://router.project-osrm.org/route/v1/driving/'+c+'?overview=full&geometries=geojson');if(!r.ok)throw new Error('Routing failed');var d=await r.json();if(!d.routes||!d.routes.length)throw new Error('No route');var rt=d.routes[0];return{geo:rt.geometry.coordinates.map(function(c){return{lat:c[1],lon:c[0]}}),dist:rt.distance/1000,dur:rt.duration/60}}
+async function fetchRds(bb){var s=bb[0],w=bb[1],n=bb[2],e=bb[3],q='[out:json][timeout:60];(way["highway"~"^(primary|secondary|tertiary|unclassified)$"]('+s+','+w+','+n+','+e+'););out geom qt;',eps=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.kumi.systems/api/interpreter'],le,i;for(i=0;i<eps.length;i++){try{var r=await fetch(eps[i],{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(q)});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json()}catch(err){le=err}}throw new Error('Overpass failed')}
+function d2r(pt,rg,iv){var mn=1e9,i;for(i=0;i<rg.length;i+=(iv||10)){var d=hav(pt.lat,pt.lon,rg[i].lat,rg[i].lon);if(d<mn)mn=d}return mn}
+function rProg(pt,rg,iv){var mn=1e9,bi=0,i;for(i=0;i<rg.length;i+=(iv||10)){var d=hav(pt.lat,pt.lon,rg[i].lat,rg[i].lon);if(d<mn){mn=d;bi=i}}return bi/Math.max(1,rg.length-1)}
+async function selectWPs(roads,rGeo,org,dst,curv,maxDur){var maxC=15+(curv/100)*45,cands=roads.map(function(r){var mid=r.geometry[Math.floor(r.geometry.length/2)];return Object.assign({},r,{mid:mid,dtr:d2r(mid,rGeo,5),prog:rProg(mid,rGeo,5)})}).filter(function(r){return r.dtr<=maxC&&r.scorePerKm>0}),nz=8,zones=Array.from({length:nz},function(){return[]}),i;for(i=0;i<cands.length;i++){var zi=Math.min(nz-1,Math.floor(cands[i].prog*nz));zones[zi].push(cands[i])}zones.forEach(function(z){z.sort(function(a,b){var s=b.scorePerKm-a.scorePerKm;return Math.abs(s)>50?s:a.dtr-b.dtr})});var sel=[];for(i=0;i<zones.length;i++){if(!zones[i].length||sel.length>=10)continue;var c=zones[i][0],tw=sel.concat([c]).sort(function(a,b){return a.prog-b.prog}),tp=[org].concat(tw.map(function(w){return{lat:w.mid.lat,lon:w.mid.lon}})).concat([dst]);try{var tr=await osrm(tp);if(tr.dur<=maxDur)sel.push(c)}catch(e){}}return sel.sort(function(a,b){return a.prog-b.prog})}
+function mUrl(stops,wps){var pts=[stops[0].lat.toFixed(6)+','+stops[0].lon.toFixed(6)],i,j;for(i=0;i<stops.length-1;i++){var lw=wps.filter(function(w){var d1=hav(w.mid.lat,w.mid.lon,stops[i].lat,stops[i].lon),d2=hav(w.mid.lat,w.mid.lon,stops[i+1].lat,stops[i+1].lon),ld=hav(stops[i].lat,stops[i].lon,stops[i+1].lat,stops[i+1].lon);return(d1+d2)<ld*1.8});for(j=0;j<lw.length;j++)pts.push(lw[j].mid.lat.toFixed(6)+','+lw[j].mid.lon.toFixed(6));pts.push(stops[i+1].lat.toFixed(6)+','+stops[i+1].lon.toFixed(6))}var t=pts.length>12?[pts[0]].concat(pts.slice(1,-1).slice(0,10)).concat([pts[pts.length-1]]):pts;return'https://www.google.com/maps/dir/'+t.join('/')}
+function renderMap(stops,bGeo,tGeo,wps,topR){
+  routeMap.eachLayer(function(l){if(!(l instanceof L.TileLayer))routeMap.removeLayer(l)});
+  if(bGeo.length)L.polyline(bGeo.map(function(p){return[p.lat,p.lon]}),{color:'#4488ff',weight:3,opacity:.5,dashArray:'8,8'}).addTo(routeMap);
+  if(tGeo.length)L.polyline(tGeo.map(function(p){return[p.lat,p.lon]}),{color:'#ff4500',weight:4,opacity:.85}).addTo(routeMap);
+  topR.forEach(function(r){if(r.geometry&&r.geometry.length>1){var cs=r.geometry.map(function(n){return[n.lat,n.lon]}),intensity=Math.min(1,r.scorePerKm/2000);L.polyline(cs,{color:'hsl('+(50-intensity*50)+',100%,'+(60+intensity*20)+'%)',weight:2+intensity*3,opacity:.7}).addTo(routeMap).bindPopup('<b>'+r.name+'</b><br>'+ds(r.length))}});
+  stops.forEach(function(s,i){var f=i===0,l=i===stops.length-1;L.circleMarker([s.lat,s.lon],{radius:8,fillColor:f?'#39d353':l?'#ff4500':'#ff8c00',fillOpacity:1,color:'#fff',weight:2}).addTo(routeMap).bindPopup('<b>'+(f?'Start':l?'End':'Stop '+i)+'</b>: '+s.name)});
+  wps.forEach(function(w,i){L.circleMarker([w.mid.lat,w.mid.lon],{radius:5,fillColor:'#ff8c00',fillOpacity:.9,color:'#fff',weight:1}).addTo(routeMap).bindPopup('<b>WP '+(i+1)+'</b>: '+w.name)});
+  routeMap.fitBounds(stops.map(function(s){return[s.lat,s.lon]}).concat(wps.map(function(w){return[w.mid.lat,w.mid.lon]})),{padding:[40,40]});
+  document.getElementById('mapPlaceholder').style.display='none';
+  var leg=document.getElementById('mapLegend');leg.classList.remove('hidden');leg.classList.add('flex');
+}
+async function planRoute(){
+  var sn=getStops();if(sn.length<2){showError('Enter start and end.');return}
+  var curv=+document.getElementById('curvinessSlider').value,detPct=+document.getElementById('detourSlider').value;
+  hideError();
+  var rc=document.getElementById('resultsCard');rc.classList.add('hidden');rc.classList.remove('flex');
+  document.getElementById('planBtn').disabled=true;showStatus();
+  try{
+    setStep(1,'active');var stops=[],i;
+    for(i=0;i<sn.length;i++){stops.push(await geocode(sn[i]));await new Promise(function(r){setTimeout(r,200)})}
+    setStep(1,'done');setStep(2,'active');
+    var base=await osrm(stops);var maxDur=base.dur*(1+detPct/100);
+    setStep(2,'done');setStep(3,'active');
+    var lats=stops.map(function(s){return s.lat}),lons=stops.map(function(s){return s.lon}),pad=.3+(curv/100)*.6,bb=[Math.min.apply(null,lats)-pad,Math.min.apply(null,lons)-pad,Math.max.apply(null,lats)+pad,Math.max.apply(null,lons)+pad];
+    var osmd=await fetchRds(bb);setStep(3,'done');
+    if(!osmd.elements||!osmd.elements.length)throw new Error('No roads found.');
+    setStep(4,'active');
+    var roads=osmd.elements.filter(function(w){return w.type==='way'&&w.geometry&&w.geometry.length>=3}).map(function(w){var s=scoreWay(w);return Object.assign({},w,{score:s.score,length:s.length,scorePerKm:s.scorePerKm,name:(w.tags&&(w.tags.name||w.tags.ref))||'Unnamed',type:(w.tags&&w.tags.highway)||'road'})}).filter(function(r){return r.length>.05&&r.score>0}).sort(function(a,b){return b.scorePerKm-a.scorePerKm});
+    setStep(4,'done');setStep(5,'active');
+    var org=stops[0],dst=stops[stops.length-1];
+    var wps=await selectWPs(roads,base.geo,org,dst,curv,maxDur);
+    var rp=[org].concat(wps.map(function(w){return{lat:w.mid.lat,lon:w.mid.lon,name:'wp'}}));
+    if(stops.length>2)for(i=1;i<stops.length-1;i++)rp.push(stops[i]);
+    rp.push(dst);
+    if(rp.length>2){var mid=rp.slice(1,-1).sort(function(a,b){return rProg(a,base.geo,5)-rProg(b,base.geo,5)});rp=[rp[0]].concat(mid).concat([rp[rp.length-1]])}
+    var twisty=await osrm(rp);var mu=mUrl(stops,wps);
+    setStep(5,'done');hideStatus();
+    document.getElementById('routeBadge').textContent=curv+'% TWISTY';
+    document.getElementById('timeCompare').innerHTML='<div class="time-block"><div class="tv" style="color:#4488ff">'+ts(base.dur)+'</div><div class="tl">Direct</div></div><div class="time-arrow">→</div><div class="time-block"><div class="tv" style="color:#ff4500">'+ts(twisty.dur)+'</div><div class="tl">Twisty</div></div><div class="time-delta"><div class="tv">+'+ts(Math.max(0,twisty.dur-base.dur))+'</div><div class="tl">For Curves</div></div>';
+    document.getElementById('detourHint').textContent='Budget: '+ts(maxDur)+' max · Used: '+ts(twisty.dur);
+    var ms=roads[0]?roads[0].scorePerKm:1;
+    document.getElementById('statsRow').innerHTML='<div class="stat-box"><div class="stat-value">'+roads.length.toLocaleString()+'</div><div class="stat-label">Roads</div></div><div class="stat-box"><div class="stat-value">'+wps.length+'</div><div class="stat-label">Twisty WPs</div></div><div class="stat-box"><div class="stat-value">'+dv(twisty.dist)+' '+du()+'</div><div class="stat-label">Total</div></div><div class="stat-box"><div class="stat-value">+'+dv(Math.max(0,twisty.dist-base.dist))+' '+du()+'</div><div class="stat-label">Detour</div></div>';
+    document.getElementById('roadsList').innerHTML=roads.slice(0,8).map(function(r,i){var p=Math.round(r.scorePerKm/ms*100);return'<div class="road-item"><div class="road-rank">'+(i+1)+'</div><div class="road-info"><div class="road-name">'+r.name+'</div><div class="road-meta">'+r.type+' · '+ds(r.length)+'</div></div><div class="road-score-bar"><div class="road-score-fill" style="width:'+p+'%"></div></div></div>'}).join('');
+    document.getElementById('mapsLink').href=mu;
+    rc.classList.remove('hidden');rc.classList.add('flex');
+    renderMap(stops,base.geo,twisty.geo,wps,roads.slice(0,30));
+  }catch(e){hideStatus();showError(e.message||'Error');console.error(e)}
+  finally{document.getElementById('planBtn').disabled=false}
+}
+</script>
+</body>
+</html>
