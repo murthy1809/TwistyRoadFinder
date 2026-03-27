@@ -225,11 +225,18 @@
             <div class="font-mono text-[0.58rem] tracking-[2px] text-muted uppercase mb-2">Top Curvy Segments</div>
             <div id="roadsList"></div>
           </div>
-          <a id="mapsLink" href="#" target="_blank"
-            class="flex items-center justify-center gap-2 w-full py-2.5 bg-transparent border border-accent rounded-lg text-accent font-display text-[1rem] tracking-[3px] no-underline transition-all hover:bg-accent hover:text-white">
-            Open in Google Maps
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </a>
+          <div class="flex gap-2">
+            <a id="mapsLink" href="#" target="_blank"
+              class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-transparent border border-accent rounded-lg text-accent font-display text-[0.85rem] tracking-[2px] no-underline transition-all hover:bg-accent hover:text-white">
+              Google Maps
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+            <button onclick="if(lastTwistyGeo&&lastStops)downloadGPX(lastStops,lastTwistyGeo)"
+              class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-transparent border border-success rounded-lg text-success font-display text-[0.85rem] tracking-[2px] cursor-pointer transition-all hover:bg-success hover:text-white">
+              Download GPX
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+            </button>
+          </div>
         </div>
 
         <!-- PM Notes -->
@@ -275,7 +282,7 @@
   </div>
 
 <script>
-let useMiles=true,slidersLinked=true,routeMap=null,stopCount=2;
+let useMiles=true,slidersLinked=true,routeMap=null,stopCount=2,lastTwistyGeo=null,lastStops=null;
 const C2D={10:5,15:8,20:12,25:15,30:18,35:22,40:25,45:28,50:30,55:35,60:40,65:45,70:50,75:55,80:60,85:65,90:70,95:80,100:75};
 
 // Init map on load
@@ -350,7 +357,7 @@ async function osrm(pts){
 }
 async function fetchRds(bb){
   var s=bb[0],w=bb[1],n=bb[2],e=bb[3];
-  var q='[out:json][timeout:60];(way["highway"~"^(secondary|tertiary|unclassified)$"]('+s+','+w+','+n+','+e+'););out geom qt;';
+  var q='[out:json][timeout:90];(way["highway"~"^(primary|secondary|tertiary|unclassified)$"]('+s+','+w+','+n+','+e+'););out geom qt;';
   var eps=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
   var le,i;
   for(i=0;i<eps.length;i++){
@@ -426,16 +433,47 @@ async function selectWPs(roads, baseGeo, org, dst, curv, maxDur){
   return accepted.sort(function(a,b){return a.entryProg-b.entryProg;});
 }
 
-// Build Google Maps URL using entry/exit points
-function mUrl(stops,wps){
-  var pts=[stops[0].lat.toFixed(6)+','+stops[0].lon.toFixed(6)];
-  for(var i=0;i<wps.length;i++){
-    pts.push(wps[i].entry.lat.toFixed(6)+','+wps[i].entry.lon.toFixed(6));
-    pts.push(wps[i].exit.lat.toFixed(6)+','+wps[i].exit.lon.toFixed(6));
+// Build Google Maps URL by sampling key deviation points along the twisty route
+function mUrl(stops, twistyGeo, baseGeo){
+  var origin = stops[0].lat.toFixed(6)+','+stops[0].lon.toFixed(6);
+  var dest   = stops[stops.length-1].lat.toFixed(6)+','+stops[stops.length-1].lon.toFixed(6);
+  var geo = twistyGeo;
+  if(!geo||geo.length<3) return 'https://www.google.com/maps/dir/'+origin+'/'+dest;
+
+  // Score every point by how far it deviates from the baseline route
+  var scored=[];
+  var step = Math.max(1, Math.floor(geo.length/200)); // sample ~200 points for scoring
+  for(var i=step; i<geo.length-step; i+=step){
+    var deviation = d2r(geo[i], baseGeo, 5);
+    scored.push({idx:i, dev:deviation, lat:geo[i].lat, lon:geo[i].lon});
   }
-  pts.push(stops[stops.length-1].lat.toFixed(6)+','+stops[stops.length-1].lon.toFixed(6));
-  if(pts.length>12) pts=[pts[0]].concat(pts.slice(1,-1).slice(0,10)).concat([pts[pts.length-1]]);
-  return'https://www.google.com/maps/dir/'+pts.join('/');
+
+  // Pick up to 20 points: mix of evenly-spaced + highest deviation
+  var numEven=10, numDev=10;
+  var evenPts=[];
+  for(var j=1;j<=numEven;j++){
+    var idx=Math.floor((j/(numEven+1))*geo.length);
+    evenPts.push({lat:geo[idx].lat,lon:geo[idx].lon,idx:idx});
+  }
+  // Top deviation points (where twisty route diverges most from baseline)
+  scored.sort(function(a,b){return b.dev-a.dev;});
+  var devPts=scored.slice(0,numDev);
+
+  // Merge, deduplicate (within ~2km), sort by route order
+  var allWP=evenPts.concat(devPts);
+  allWP.sort(function(a,b){return a.idx-b.idx;});
+  var deduped=[allWP[0]];
+  for(var k=1;k<allWP.length;k++){
+    var prev=deduped[deduped.length-1];
+    if(hav(prev.lat,prev.lon,allWP[k].lat,allWP[k].lon)>2){
+      deduped.push(allWP[k]);
+    }
+  }
+
+  // Google Maps URL supports ~20 waypoints; trim if needed
+  if(deduped.length>20) deduped=deduped.slice(0,20);
+  var waypts=deduped.map(function(p){return p.lat.toFixed(6)+','+p.lon.toFixed(6);});
+  return 'https://www.google.com/maps/dir/'+[origin].concat(waypts).concat([dest]).join('/');
 }
 
 // Render map
@@ -477,6 +515,39 @@ function renderMap(stops,bGeo,tGeo,wps,roads){
   document.getElementById('mapPlaceholder').style.display='none';
   var leg=document.getElementById('mapLegend');
   leg.classList.remove('hidden');leg.classList.add('flex');
+}
+
+
+// Generate and download GPX file from twisty route geometry
+function downloadGPX(stops, twistyGeo){
+  var now = new Date().toISOString();
+  var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  gpx += '<gpx version="1.1" creator="Twisties" xmlns="http://www.topografix.com/GPX/1/1">\n';
+  gpx += '  <metadata><name>Twisty Route: '+stops[0].name+' to '+stops[stops.length-1].name+'</name><time>'+now+'</time></metadata>\n';
+
+  // Waypoints for stops
+  stops.forEach(function(s, i){
+    var label = i===0?'Start':i===stops.length-1?'End':'Stop '+(i);
+    gpx += '  <wpt lat="'+s.lat.toFixed(6)+'" lon="'+s.lon.toFixed(6)+'"><name>'+label+': '+s.name+'</name></wpt>\n';
+  });
+
+  // Route track with full polyline
+  gpx += '  <trk><name>Twisty Route</name><trkseg>\n';
+  for(var i=0; i<twistyGeo.length; i++){
+    gpx += '    <trkpt lat="'+twistyGeo[i].lat.toFixed(6)+'" lon="'+twistyGeo[i].lon.toFixed(6)+'" />\n';
+  }
+  gpx += '  </trkseg></trk>\n';
+  gpx += '</gpx>';
+
+  var blob = new Blob([gpx], {type:'application/gpx+xml'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href   = url;
+  a.download = 'twisty-route.gpx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Main route planning function
@@ -522,7 +593,13 @@ async function planRoute(){
     // Step 4: Score roads
     setStep(4,'active');
     var roads=osmd.elements
-      .filter(function(w){return w.type==='way'&&w.geometry&&w.geometry.length>=3;})
+      .filter(function(w){
+        if(w.type!=='way'||!w.geometry||w.geometry.length<3) return false;
+        // Skip primary roads (urban arterials/highways) — not fun riding roads
+        var hw=w.tags&&w.tags.highway;
+        if(hw==='primary'||hw==='trunk'||hw==='motorway') return false;
+        return true;
+      })
       .map(function(w){
         var s=scoreWay(w);
         return Object.assign({},w,{
@@ -554,7 +631,8 @@ async function planRoute(){
     finalPts.push(dst);
 
     var twisty=await osrm(finalPts);
-    var mu=mUrl(stops,wps);
+    lastTwistyGeo=twisty.geo;lastStops=stops;
+    var mu=mUrl(stops,twisty.geo,base.geo);
     setStep(5,'done');
     hideStatus();
 

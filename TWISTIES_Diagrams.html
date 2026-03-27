@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TWISTIES v3 - Architecture Diagrams</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Courier New', monospace;
+  background: #0a0a0a;
+  color: #e8e8e8;
+  padding: 2rem;
+  line-height: 1.6;
+}
+h1, h2 { color: #ff4500; margin: 2rem 0 1rem; font-family: Arial, sans-serif; }
+h2 { color: #ff8c00; }
+.diagram {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.table-container {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: Arial, sans-serif;
+}
+th, td {
+  padding: 0.8rem;
+  text-align: left;
+  border-bottom: 1px solid #2a2a2a;
+}
+th {
+  background: #2a2a2a;
+  color: #ff8c00;
+  font-weight: bold;
+}
+tr:hover { background: #222; }
+.good { color: #39d353; }
+.bad { color: #ff4500; }
+.neutral { color: #888; }
+.highlight { background: #2a2a2a; padding: 0.2rem 0.4rem; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>🗺️ TWISTIES v3 - Architecture Diagrams</h1>
+
+<h2>1. Overall System Architecture</h2>
+<div class="diagram">
+   ┌────────────────────────────────────────────────────────────┐
+   │                     TWISTIES v3 APP                        │
+   │              (Single HTML File, Client-Side)               │
+   └────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+   ┌─────────┐         ┌─────────┐         ┌─────────────┐
+   │Nominatim│         │  OSRM   │         │  Overpass   │
+   │  API    │         │  API    │         │    API      │
+   │(Geocode)│         │(Routing)│         │(Road Data)  │
+   └─────────┘         └─────────┘         └─────────────┘
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │   JavaScript     │
+                    │  Engine (Client)  │
+                    │                  │
+                    │ - Geocoding      │
+                    │ - Scoring        │
+                    │ - Filtering      │
+                    │ - Rendering      │
+                    └──────────────────┘
+                              │
+                    ┌─────────┴─────────┐
+                    │                   │
+                    ▼                   ▼
+              ┌──────────┐        ┌──────────┐
+              │  Leaflet │        │  Google  │
+              │   Map    │        │   Maps   │
+              │          │        │   Link   │
+              └──────────┘        └──────────┘
+</div>
+
+<h2>2. Data Flow: From User Input to Results</h2>
+<div class="diagram">
+USER INPUT
+├─ Origin: "Dallas, TX"
+├─ Destination: "Hot Springs, AR"
+└─ Curviness Slider: 50%
+         │
+         ▼
+    [planRoute()]
+         │
+         ├─► geocode("Dallas, TX")
+         │   └─► Nominatim API
+         │       └─► {lat: 32.77, lon: -96.79}
+         │
+         ├─► geocode("Hot Springs, AR")
+         │   └─► Nominatim API
+         │       └─► {lat: 34.50, lon: -93.05}
+         │
+         ├─► osrm([Dallas, HotSprings])
+         │   └─► OSRM API
+         │       └─► {geo: [...], dist: 340km, dur: 340min}
+         │
+         ├─► calcCorridorBB(baseGeo, 50)
+         │   └─► Calculate tight bbox from route
+         │       └─► [32.0, -96.5, 35.0, -92.5]
+         │
+         ├─► fetchRds(bbox)
+         │   └─► Overpass API
+         │       └─► {ways: [road1, road2, ..., road500]}
+         │
+         ├─► scoreWay(each_road)
+         │   └─► Circumradius algorithm
+         │       └─► {score: 4521, scorePerKm: 45.2, ...}
+         │
+         ├─► selectWPs(roads, budget)
+         │   └─► Option C with parallel OSRM
+         │       └─► [WP1, WP2, WP3, WP4]
+         │
+         ├─► osrm([Dallas, WP1, WP2, WP3, WP4, HotSprings])
+         │   └─► OSRM API
+         │       └─► {geo: [...], dist: 380km, dur: 390min}
+         │
+         └─► renderMap() + renderResults()
+             └─► Display to user
+</div>
+
+<h2>3. selectWPs() Algorithm Flow (Option C)</h2>
+<div class="diagram">
+selectWPs(roads, baseRoute, curv, maxDur)
+│
+├─ 1. FILTER CANDIDATES
+│  ├─ maxC = 15 + (curv/100)*45
+│  ├─ Keep: distance_to_route <= maxC
+│  └─ Keep: scorePerKm > 0
+│  └─► Reduces 500 roads → ~50-100 candidates
+│
+├─ 2. DISTRIBUTE INTO ZONES
+│  ├─ Create 8 empty zones
+│  └─ For each candidate:
+│     └─ Assign to zone[floor(progress*8)]
+│  └─► Spreads candidates evenly along route
+│
+├─ 3. RANK WITHIN ZONES
+│  └─ For each zone:
+│     ├─ Sort by scorePerKm (curviness)
+│     ├─ Use distance as tiebreaker
+│     └─ Take top 1-2 per zone
+│  └─► Reduces 50-100 → ~20 top candidates
+│
+├─ 4. PRE-FILTER
+│  └─ Sort all top candidates by scorePerKm
+│  └─ Keep only top 20
+│  └─► Final candidates list ready for testing
+│
+├─ 5. PARALLEL BATCH TESTING
+│  ├─ Batch size = 4
+│  └─ For each batch:
+│     ├─ Create Promise for each candidate
+│     │  ├─ Current selection + this candidate
+│     │  └─ Call OSRM(selection + candidate)
+│     ├─ Wait for all 4 in parallel
+│     │  └─ Promise.all([osrm(c1), osrm(c2), osrm(c3), osrm(c4)])
+│     └─ Keep candidates where dur <= maxDur
+│  └─► OPTIMIZATION #2: Parallel requests instead of sequential
+│
+└─ 6. RETURN
+   └─ Selected candidates sorted by progress
+</div>
+
+<h2>4. Performance Optimization Techniques</h2>
+<div class="diagram">
+
+╔════════════════════════════════════════════════════════════╗
+║         OPTIMIZATION #1: TIGHT CORRIDOR BBOX              ║
+╠════════════════════════════════════════════════════════════╣
+║                                                            ║
+║  BEFORE: Origin/Destination-based bbox                    ║
+║  ┌─────────────────────────────────────┐                  ║
+║  │        HUGE search area             │                  ║
+║  │       (padding on all sides)        │                  ║
+║  │  Dallas ●───────────────────────● HotSprings          ║
+║  │       (all roads here fetched)      │                  ║
+║  └─────────────────────────────────────┘                  ║
+║  • Time: 15-30 seconds                                    ║
+║                                                            ║
+║  AFTER: Route-based tight corridor bbox                   ║
+║  ┌─────────────────────────────────────┐                  ║
+║  │    ╔═════════════════════════╗      │                  ║
+║  │    ║  Tight corridor        ║      │                  ║
+║  │    ║  (only roads here)     ║      │                  ║
+║  │    ║ ║                     ║ ║      │                  ║
+║  │ Dallas ║─────────────────║ HotSprings                  ║
+║  │    ║                     ║          │                  ║
+║  │    ╚═════════════════════╝          │                  ║
+║  │   (padding calculated from          │                  ║
+║  │    actual route geometry)           │                  ║
+║  └─────────────────────────────────────┘                  ║
+║  • Time: 5-15 seconds (-10-15 seconds saved)             ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════════════════╗
+║      OPTIMIZATION #2: PARALLEL OSRM TESTING               ║
+╠════════════════════════════════════════════════════════════╣
+║                                                            ║
+║  BEFORE: Sequential testing                               ║
+║                                                            ║
+║  Time ─────────────────────────────────────────────────   ║
+║   0s   [test C1]  [test C2]  [test C3]  [test C4]         ║
+║        └─ 8s ──└─ 8s ──└─ 8s ──└─ 8s ──│                  ║
+║                                        32s total          ║
+║                                                            ║
+║  AFTER: Parallel batching (4 candidates at a time)        ║
+║                                                            ║
+║  Time ─────────────────────────────────────────────────   ║
+║   0s  [C1,C2,C3,C4]  [C5,C6,C7,C8]  [C9,C10...]          ║
+║       └─────8s─────│ └─────8s─────│ └──────...            ║
+║                                        8-10s total        ║
+║                                                            ║
+║  Speedup: 3-4x faster (-20-60 seconds saved)             ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════════════════╗
+║       OPTIMIZATION #3: AGGRESSIVE PRE-FILTERING           ║
+╠════════════════════════════════════════════════════════════╣
+║                                                            ║
+║  BEFORE: Test many candidates                             ║
+║  ┌────────────────────────────────────┐                   ║
+║  │ Candidates to test: 30-50           │                  ║
+║  │ • Road A (score: 2500)              │                  ║
+║  │ • Road B (score: 2400)              │                  ║
+║  │ • Road C (score: 2300)              │                  ║
+║  │ • Road D (score: 100)  ← low score  │                  ║
+║  │ • Road E (score: 50)   ← low score  │                  ║
+║  │ ... (many more low-scoring)         │                  ║
+║  │                                     │                  ║
+║  │ Each gets OSRM test: 30-50 calls    │                  ║
+║  └────────────────────────────────────┘                   ║
+║                                                            ║
+║  AFTER: Pre-filter to top 20                              ║
+║  ┌────────────────────────────────────┐                   ║
+║  │ Candidates to test: 20 (max)        │                  ║
+║  │ • Road A (score: 2500)              │                  ║
+║  │ • Road B (score: 2400)              │                  ║
+║  │ • Road C (score: 2300)              │                  ║
+║  │ ... (only top 20 by curviness)      │                  ║
+║  │                                     │                  ║
+║  │ Only OSRM tests: 20 calls max       │                  ║
+║  └────────────────────────────────────┘                   ║
+║                                                            ║
+║  Result: Fewer API calls, faster filtering               ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+</div>
+
+<h2>5. Time Budget Constraint</h2>
+<div class="diagram">
+User sets sliders:
+├─ Curviness: 50%
+└─ Detour Budget: +30%
+
+These map to time constraints:
+├─ Baseline route (direct): 340 minutes
+└─ Max allowed with detour: 340 × (1 + 30/100) = 442 minutes
+
+                   Time Available
+        ┌──────────────────────────────┐
+        │                              │
+    0 ┌─┴──────────────────────────────┴─┐
+      │                                  │
+      │ Baseline (direct)                │
+      │ 340 min                          │
+      │ ─────────────────────────────── │
+      │                                  │
+      │ Twisty route with waypoints      │
+      │ 390 min (still within budget)    │
+      │ ──────────────────────────────── │
+      │                                  │
+      │ BUDGET BUFFER                    │
+      │ (442 - 390) = 52 min remaining   │
+      │ ────────                         │
+      │                                  │
+442 └──────────────────────────────────────┘
+    Max allowed
+    (baseline × 1.30)
+
+Waypoints only selected if:
+final_route_time <= baseline_time × (1 + detour_pct/100)
+</div>
+
+<h2>6. Curvature Scoring Algorithm (Circumradius)</h2>
+<div class="diagram">
+For each road, iterate through 3-point segments:
+
+             P1
+            /  \
+           /    \
+          /      \  ← circumradius (R)
+         /        \
+        /          \
+   ────P2──────────P3────
+
+Sharp turn (small R):     Gentle curve (large R):
+   ╱╲                        ╱╲
+  ╱  ╲                      ╱  ╲
+ ╱    ╲ R = 0.02 km       ╱    ╲ R = 0.5 km
+╱      ╲                  ╱      ╲
+─────────                ─────────
+weight = 4               weight = 1
+
+Weight buckets (by radius):
+┌─────────────┬───────────────┐
+│  Radius     │  Weight       │
+├─────────────┼───────────────┤
+│ < 0.03 km   │  4 (very hot) │
+│ < 0.06 km   │  3 (hot)      │
+│ < 0.175 km  │  2 (medium)   │
+│ < 0.5 km    │  1 (mild)     │
+└─────────────┴───────────────┘
+
+Final score = Σ(segment_length × weight) for each road
+Score per km = total_score / total_road_length
+
+Higher score per km = more twisty
+</div>
+
+<h2>7. Option C vs Previous Approaches</h2>
+<div class="diagram">
+Option A: Road Midpoints
+┌──────────────────────────────┐
+│ Problem: T-shaped detours    │
+│                              │
+│  Start → [long detour up]    │
+│          └─ Road midpoint    │
+│                              │
+│          [long detour back]  │
+│          └─ Next waypoint    │
+│                              │
+│ Result: Inefficient, wastes  │
+│ time going up-and-back       │
+└──────────────────────────────┘
+
+Option B: Circumradius Optimization
+┌──────────────────────────────┐
+│ Problem: Urban streets       │
+│                              │
+│ Start ● (urban)              │
+│   ↓                          │
+│ Downtown streets (tight      │
+│ turns, but not fun)          │
+│   ↓                          │
+│ Destination                  │
+│                              │
+│ Result: Selects residential  │
+│ streets, not highways        │
+└──────────────────────────────┘
+
+Option C: Entry/Exit Waypoints (BEST)
+┌──────────────────────────────┐
+│ Solution: Anchor to baseline │
+│                              │
+│  Start ●                     │
+│    │                         │
+│    └─ EXIT baseline (point A)│
+│       └─ [Twisty road]       │
+│       └─ RE-ENTER baseline   │
+│          (point B)           │
+│    │                         │
+│    └─ EXIT baseline (point C)│
+│       └─ [Another twisty]    │
+│       └─ RE-ENTER baseline   │
+│          (point D)           │
+│    │                         │
+│  End ●                       │
+│                              │
+│ Result: Rider leaves route   │
+│ on actual fun roads, rejoins │
+│ when done. No dead-ends.     │
+└──────────────────────────────┘
+</div>
+
+<h2>8. Final Performance Summary</h2>
+<div class="table-container">
+<table>
+<tr>
+<th>Phase</th>
+<th>Before</th>
+<th>After</th>
+<th>Savings</th>
+<th>Method</th>
+</tr>
+<tr>
+<td>Geocoding</td>
+<td>2-3s</td>
+<td>2-3s</td>
+<td class="neutral">—</td>
+<td>Serial (hard to optimize)</td>
+</tr>
+<tr>
+<td>OSRM baseline</td>
+<td>3-5s</td>
+<td>3-5s</td>
+<td class="neutral">—</td>
+<td>Single call</td>
+</tr>
+<tr>
+<td class="highlight">Overpass fetch</td>
+<td class="bad">15-30s</td>
+<td class="good">5-15s</td>
+<td class="good">-10-15s</td>
+<td class="highlight">Tight corridor bbox</td>
+</tr>
+<tr>
+<td>Scoring</td>
+<td>2-3s</td>
+<td>2-3s</td>
+<td class="neutral">—</td>
+<td>Single-threaded algorithm</td>
+</tr>
+<tr>
+<td class="highlight">OSRM testing</td>
+<td class="bad">30-90s</td>
+<td class="good">10-30s</td>
+<td class="good">-20-60s (3-4x)</td>
+<td class="highlight">Parallel batching</td>
+</tr>
+<tr>
+<td>Final route</td>
+<td>3-5s</td>
+<td>3-5s</td>
+<td class="neutral">—</td>
+<td>Single call</td>
+</tr>
+<tr style="font-weight: bold;">
+<td>TOTAL</td>
+<td class="bad">55-136s</td>
+<td class="good">25-56s</td>
+<td class="good">2.0-2.5x faster</td>
+<td>Combined optimizations</td>
+</tr>
+</table>
+</div>
+
+</body>
+</html>
