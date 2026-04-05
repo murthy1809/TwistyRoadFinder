@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TWISTIES — Curvy Road Trip Planner</title>
+<title>SHARP TURNS — Curvy Road Trip Planner</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -118,7 +118,7 @@
   <!-- Top Bar -->
   <header class="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-border bg-surface z-10">
     <div class="flex items-center gap-3">
-      <span class="font-display text-[1.6rem] tracking-[3px] grad-text leading-none">Twisties</span>
+      <span class="font-display text-[1.6rem] tracking-[3px] grad-text leading-none">Sharp Turns</span>
       <span class="font-mono text-[0.58rem] text-muted tracking-[2px] uppercase border border-border rounded px-2 py-0.5 hidden sm:inline">Curvy Road Trip Planner</span>
     </div>
     <div class="flex items-center gap-4">
@@ -197,7 +197,7 @@
         <!-- Find Button -->
         <button id="planBtn" onclick="planRoute()"
           class="w-full py-3 bg-gradient-to-r from-accent to-accent2 text-white font-display text-[1.2rem] tracking-[4px] rounded-lg border-none cursor-pointer transition-opacity relative overflow-hidden hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
-          ⚡ Find Twisty Roads
+          ⚡ Find Sharp Turns
         </button>
 
         <!-- Status Bar -->
@@ -215,7 +215,7 @@
         <!-- Results -->
         <div id="resultsCard" class="hidden flex-col gap-4 fade-in">
           <div class="flex items-center justify-between">
-            <span class="font-display text-[1rem] tracking-[2px] text-accent">Your Twisty Route</span>
+            <span class="font-display text-[1rem] tracking-[2px] text-accent">Your Sharp Turns Route</span>
             <span id="routeBadge" class="font-mono text-[0.55rem] tracking-[2px] bg-[rgba(255,69,0,0.12)] border border-[rgba(255,69,0,0.25)] text-accent2 px-2.5 py-1 rounded">—</span>
           </div>
           <div id="timeCompare" class="flex items-center justify-around p-3 bg-surface2 border border-border rounded-lg font-mono"></div>
@@ -268,13 +268,13 @@
       <!-- Legend overlay -->
       <div id="mapLegend" class="hidden absolute bottom-5 left-5 gap-3 bg-[rgba(17,17,17,0.88)] backdrop-blur-sm border border-border rounded-xl px-4 py-2.5 font-mono text-[0.55rem] text-muted tracking-wide z-[500]">
         <div class="flex items-center gap-1.5"><div class="w-4 h-[3px] rounded-full" style="background:#4488ff"></div> Baseline</div>
-        <div class="flex items-center gap-1.5"><div class="w-4 h-[3px] rounded-full" style="background:#ff4500"></div> Twisty</div>
+        <div class="flex items-center gap-1.5"><div class="w-4 h-[3px] rounded-full" style="background:#ff4500"></div> Sharp Turns</div>
         <div class="flex items-center gap-1.5"><div class="w-4 h-[2px] rounded-full" style="background:#ffff00"></div> Curvy</div>
       </div>
 
       <!-- Empty state -->
       <div id="mapPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-        <div class="font-display text-[5rem] tracking-[8px] text-[rgba(255,69,0,0.05)] leading-none">TWISTIES</div>
+        <div class="font-display text-[5rem] tracking-[8px] text-[rgba(255,69,0,0.05)] leading-none">SHARP TURNS</div>
         <div class="font-mono text-[0.62rem] text-[#2a2a2a] tracking-[3px] uppercase mt-4">Set your locations and hit Find</div>
       </div>
     </div>
@@ -337,7 +337,7 @@ function scoreWay(w){var n=w.geometry;if(!n||n.length<3)return{score:0,length:0,
 // API calls
 async function geocode(p){
   try{
-    var r=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(p)+'&format=json&limit=1',{headers:{'Accept-Language':'en','User-Agent':'Twisties/3'}});
+    var r=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(p)+'&format=json&limit=1',{headers:{'Accept-Language':'en','User-Agent':'SharpTurns/3'}});
     if(!r.ok)throw new Error('HTTP '+r.status);
     var d=await r.json();
     if(!d.length)throw new Error('Location not found: '+p);
@@ -414,21 +414,25 @@ async function selectWPs(roads, baseGeo, org, dst, curv, maxDur){
   candidates.sort(function(a,b){return a.entryProg-b.entryProg;});
 
   var accepted=[];
-  for(var ci=0;ci<candidates.length;ci++){
+  // Parallel OSRM testing: batch 3 candidates at a time instead of sequential
+  var batchSize=3;
+  for(var ci=0;ci<candidates.length;ci+=batchSize){
     if(accepted.length>=8) break;
-    var c=candidates[ci];
-    // Build test route: org → [accepted entry/exits] → c.entry → c.exit → dst
-    var ordered=accepted.concat([c]).sort(function(a,b){return a.entryProg-b.entryProg;});
-    var pts=[org];
-    for(var wi=0;wi<ordered.length;wi++){
-      pts.push({lat:ordered[wi].entry.lat,lon:ordered[wi].entry.lon});
-      pts.push({lat:ordered[wi].exit.lat, lon:ordered[wi].exit.lon});
-    }
-    pts.push(dst);
-    try{
-      var result=await osrm(pts);
-      if(result.dur<=maxDur) accepted.push(c);
-    }catch(e){/* skip */}
+    var batch=candidates.slice(ci,Math.min(ci+batchSize,candidates.length));
+    var promises=batch.map(function(c){
+      var ordered=accepted.concat([c]).sort(function(a,b){return a.entryProg-b.entryProg;});
+      var pts=[org];
+      for(var wi=0;wi<ordered.length;wi++){
+        pts.push({lat:ordered[wi].entry.lat,lon:ordered[wi].entry.lon});
+        pts.push({lat:ordered[wi].exit.lat, lon:ordered[wi].exit.lon});
+      }
+      pts.push(dst);
+      return osrm(pts).then(function(result){return{candidate:c,result:result}}).catch(function(e){return null});
+    });
+    var results=await Promise.all(promises);
+    results.forEach(function(r){
+      if(r&&accepted.length<8&&r.result.dur<=maxDur) accepted.push(r.candidate);
+    });
   }
   return accepted.sort(function(a,b){return a.entryProg-b.entryProg;});
 }
@@ -522,8 +526,8 @@ function renderMap(stops,bGeo,tGeo,wps,roads){
 function downloadGPX(stops, twistyGeo){
   var now = new Date().toISOString();
   var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
-  gpx += '<gpx version="1.1" creator="Twisties" xmlns="http://www.topografix.com/GPX/1/1">\n';
-  gpx += '  <metadata><name>Twisty Route: '+stops[0].name+' to '+stops[stops.length-1].name+'</name><time>'+now+'</time></metadata>\n';
+  gpx += '<gpx version="1.1" creator="Sharp Turns" xmlns="http://www.topografix.com/GPX/1/1">\n';
+  gpx += '  <metadata><name>Sharp Turns Route: '+stops[0].name+' to '+stops[stops.length-1].name+'</name><time>'+now+'</time></metadata>\n';
 
   // Waypoints for stops
   stops.forEach(function(s, i){
@@ -532,7 +536,7 @@ function downloadGPX(stops, twistyGeo){
   });
 
   // Route track with full polyline
-  gpx += '  <trk><name>Twisty Route</name><trkseg>\n';
+  gpx += '  <trk><name>Sharp Turns Route</name><trkseg>\n';
   for(var i=0; i<twistyGeo.length; i++){
     gpx += '    <trkpt lat="'+twistyGeo[i].lat.toFixed(6)+'" lon="'+twistyGeo[i].lon.toFixed(6)+'" />\n';
   }
@@ -543,7 +547,7 @@ function downloadGPX(stops, twistyGeo){
   var url  = URL.createObjectURL(blob);
   var a    = document.createElement('a');
   a.href   = url;
-  a.download = 'twisty-route.gpx';
+  a.download = 'sharp-turns-route.gpx';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -637,11 +641,11 @@ async function planRoute(){
     hideStatus();
 
     // Render results
-    document.getElementById('routeBadge').textContent=curv+'% TWISTY';
+    document.getElementById('routeBadge').textContent=curv+'% SHARP';
     document.getElementById('timeCompare').innerHTML=
       '<div class="time-block"><div class="tv" style="color:#4488ff">'+ts(base.dur)+'</div><div class="tl">Direct</div></div>'+
       '<div class="time-arrow">→</div>'+
-      '<div class="time-block"><div class="tv" style="color:#ff4500">'+ts(twisty.dur)+'</div><div class="tl">Twisty</div></div>'+
+      '<div class="time-block"><div class="tv" style="color:#ff4500">'+ts(twisty.dur)+'</div><div class="tl">Sharp Turns</div></div>'+
       '<div class="time-delta"><div class="tv">+'+ts(Math.max(0,twisty.dur-base.dur))+'</div><div class="tl">For Curves</div></div>';
     document.getElementById('detourHint').textContent='Budget: '+ts(maxDur)+' max · Used: '+ts(twisty.dur);
     var ms=roads[0]?roads[0].scorePerKm:1;
